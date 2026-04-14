@@ -545,3 +545,46 @@ def switch_global_theme(theme: Theme) -> str:
     manager = get_theme_manager()
     manager.switch_theme(theme)
     return manager.get_stylesheet()
+
+
+class ProgressDisplay:
+    """Helper class for displaying progress with percentage, time, and status."""
+    
+    def __init__(self, total_items: int = 100):
+        self.total_items = max(1, total_items)
+        self.current_item = 0
+        self.start_time = None
+        self.status_message = ""
+    
+    def update(self, current: int, status: str = "") -> str:
+        """Update progress and return formatted display string."""
+        from datetime import datetime
+        
+        self.current_item = current
+        self.status_message = status
+        
+        if self.start_time is None:
+            from datetime import datetime
+            self.start_time = datetime.now()
+        
+        percentage = int((current / self.total_items) * 100)
+        
+        # Calculate elapsed time
+        elapsed = datetime.now() - self.start_time
+        elapsed_sec = int(elapsed.total_seconds())
+        elapsed_str = f"{elapsed_sec}s" if elapsed_sec < 60 else f"{elapsed_sec // 60}m{elapsed_sec % 60}s"
+        
+        # Estimate remaining time
+        if current > 0:
+            rate = current / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
+            remaining_sec = int((self.total_items - current) / rate) if rate > 0 else 0
+            remaining_str = f"{remaining_sec}s" if remaining_sec < 60 else f"{remaining_sec // 60}m"
+        else:
+            remaining_str = "Calcul..."
+        
+        # Format display
+        display = f"{percentage}% • Temps: {elapsed_str} • Reste: {remaining_str}"
+        if status:
+            display += f" • {status}"
+        
+        return display

@@ -48,7 +48,9 @@ from ssh_manager import SSHManager
 from ssh_manager import check_ntp_server
 from sip_notify import reboot_phone, resync_phone
 from xml_generator import generate_xml_files
-from theme import Theme, get_theme_manager
+from theme import Theme, get_theme_manager, ProgressDisplay
+from dialogs import ErrorDialog, WarningDialog, SuccessDialog, ConfirmDialog, InfoDialog
+from notifications import NotificationManager
 
 DEFAULT_TIMEZONE = "Central Europe Standard/Daylight Time"
 SUPPORTED_TIMEZONES = [
@@ -261,11 +263,16 @@ class MainWindow(QMainWindow):
         self.scan_thread: QThread | None = None
         self.scan_worker: NetworkScanWorker | None = None
         self.theme_manager = get_theme_manager()
+        self.scan_progress_display = ProgressDisplay(100)
+        self.reboot_progress_display = ProgressDisplay(100)
+        self.server_progress_display = ProgressDisplay(100)
+        self.notification_manager = None  # Will be initialized after _build_ui
         self.setWindowTitle("Cisco IP Phone Provisioning Tool")
         self._apply_adaptive_window_size()
 
         self._build_ui()
         self._apply_style()
+        self.notification_manager = NotificationManager(self.centralWidget())
         self._set_connected_ui(False)
         self._load_phones_from_db()
         self._log("INFO", "Application démarrée.")
@@ -303,12 +310,28 @@ class MainWindow(QMainWindow):
         """Resize window to fit small/medium laptop screens safely."""
         screen = QGuiApplication.primaryScreen()
         if not screen:
-            self.resize(1100, 760)
+            self.resize(1024, 700)
             return
         geom = screen.availableGeometry()
-        width = max(900, min(1220, geom.width() - 40))
-        height = max(620, min(820, geom.height() - 60))
-        self.resize(width, height)
+        
+        # Responsive sizing for different screen sizes
+        screen_width = geom.width()
+        screen_height = geom.height()
+        
+        # Minimum sizes for very small screens (1366x768 laptop displays)
+        if screen_width <= 1366:
+            target_width = min(1000, screen_width - 20)
+            target_height = min(650, screen_height - 50)
+        # Medium screens (1600+)
+        elif screen_width <= 1920:
+            target_width = min(1200, screen_width - 50)
+            target_height = min(800, screen_height - 80)
+        # Large screens (2560+)
+        else:
+            target_width = min(1400, screen_width - 100)
+            target_height = min(900, screen_height - 100)
+        
+        self.resize(target_width, target_height)
 
     def _build_tab_connection(self) -> QWidget:
         tab = QWidget()
@@ -333,10 +356,13 @@ class MainWindow(QMainWindow):
 
         self.btn_test_connect = QPushButton("Tester connexion")
         self.btn_test_connect.clicked.connect(self.test_ssh_connection)
+        self.btn_test_connect.setToolTip("Vérifier la connexion SSH sans se connecter")
         self.btn_connect = QPushButton("Connexion")
         self.btn_connect.clicked.connect(self.connect_ssh)
+        self.btn_connect.setToolTip("Établir une connexion SSH avec le serveur")
         self.btn_disconnect = QPushButton("Déconnexion")
         self.btn_disconnect.clicked.connect(self.disconnect_ssh)
+        self.btn_disconnect.setToolTip("Fermer la connexion SSH")
 
         self.lbl_status_dot = QLabel("●")
         self.lbl_status_dot.setObjectName("status_dot")
@@ -348,29 +374,31 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 0)
         self.progress.hide()
 
-        grid.addWidget(QLabel("IP du serveur"), 0, 0)
-        grid.addWidget(self.edt_host, 0, 1)
-        grid.addWidget(QLabel("Port SSH"), 0, 2)
-        grid.addWidget(self.spn_port, 0, 3)
-        grid.addWidget(QLabel("Nom d'utilisateur"), 1, 0)
-        grid.addWidget(self.edt_user, 1, 1)
-        grid.addWidget(QLabel("Mot de passe"), 1, 2)
-        grid.addWidget(self.edt_password, 1, 3)
-        grid.addWidget(self.btn_test_connect, 2, 1)
-        grid.addWidget(self.btn_connect, 2, 2)
-        grid.addWidget(self.btn_disconnect, 2, 3)
-        grid.addWidget(self.lbl_status_dot, 3, 0)
-        grid.addWidget(self.lbl_status_text, 3, 1, 1, 3)
-        grid.addWidget(self.progress_label, 4, 0, 1, 4)
-        grid.addWidget(self.progress, 5, 0, 1, 4)
+        grid.addWidget(QLabel("IP du serveur"), 0, 0, 1, 2)
+        grid.addWidget(self.edt_host, 0, 2, 1, 2)
+        grid.addWidget(QLabel("Port SSH"), 1, 0)
+        grid.addWidget(self.spn_port, 1, 1)
+        grid.addWidget(QLabel("Nom d'utilisateur"), 1, 2, 1, 2)
+        grid.addWidget(self.edt_user, 2, 0, 1, 2)
+        grid.addWidget(QLabel("Mot de passe"), 2, 2, 1, 2)
+        grid.addWidget(self.edt_password, 3, 0, 1, 4)
+        grid.addWidget(self.btn_test_connect, 4, 0)
+        grid.addWidget(self.btn_connect, 4, 1)
+        grid.addWidget(self.btn_disconnect, 4, 2)
+        grid.addWidget(self.lbl_status_dot, 5, 0)
+        grid.addWidget(self.lbl_status_text, 5, 1, 1, 3)
+        grid.addWidget(self.progress_label, 6, 0, 1, 4)
+        grid.addWidget(self.progress, 7, 0, 1, 4)
 
         # Theme switcher
         theme_group = QGroupBox("Apparence")
         theme_layout = QHBoxLayout(theme_group)
         self.btn_theme_light = QPushButton("Mode Clair")
         self.btn_theme_light.clicked.connect(lambda: self.switch_theme(Theme.LIGHT))
+        self.btn_theme_light.setToolTip("Basculer vers le thème clair")
         self.btn_theme_dark = QPushButton("Mode Sombre")
         self.btn_theme_dark.clicked.connect(lambda: self.switch_theme(Theme.DARK))
+        self.btn_theme_dark.setToolTip("Basculer vers le thème sombre")
         theme_layout.addWidget(self.btn_theme_light)
         theme_layout.addWidget(self.btn_theme_dark)
         theme_layout.addStretch()
@@ -389,10 +417,13 @@ class MainWindow(QMainWindow):
         setup_row = QHBoxLayout(setup_group)
         self.btn_install_tftp = QPushButton("Installer TFTP + Chrony")
         self.btn_install_tftp.clicked.connect(self.install_tftp)
+        self.btn_install_tftp.setToolTip("Installer le serveur TFTP et Chrony (synchronisation horaire)")
         self.btn_check_tftp = QPushButton("Vérifier dossier TFTP")
         self.btn_check_tftp.clicked.connect(self.check_tftp_folder)
+        self.btn_check_tftp.setToolTip("Vérifier que le dossier TFTP existe et est accessible")
         self.btn_restart_tftp = QPushButton("Redémarrer TFTP")
         self.btn_restart_tftp.clicked.connect(self.restart_tftp)
+        self.btn_restart_tftp.setToolTip("Redémarrer le service TFTP")
         setup_row.addWidget(self.btn_install_tftp)
         setup_row.addWidget(self.btn_check_tftp)
         setup_row.addWidget(self.btn_restart_tftp)
@@ -416,6 +447,7 @@ class MainWindow(QMainWindow):
         self.edt_ntp_ip.textChanged.connect(lambda _t: self._set_ntp_status(False))
         self.btn_test_ntp = QPushButton("Tester NTP")
         self.btn_test_ntp.clicked.connect(self.test_ntp_server)
+        self.btn_test_ntp.setToolTip("Vérifier que le serveur NTP est accessible")
         self.lbl_ntp_status = QLabel("NTP: KO")
         self.lbl_ntp_status.setStyleSheet("color: #ef4444; font-weight: 700;")
         config_form.addRow("IP serveur SIP (UC)", self.edt_uc_ip)
@@ -438,6 +470,7 @@ class MainWindow(QMainWindow):
         self.btn_deployer = QPushButton("Déployer")
         self.btn_deployer.setObjectName("btn_deployer")
         self.btn_deployer.clicked.connect(self.deploy_all)
+        self.btn_deployer.setToolTip("Déployer les configurations XML sur les téléphones sélectionnés")
         deploy_row.addWidget(self.btn_deployer)
 
         layout.addWidget(setup_group)
@@ -479,6 +512,7 @@ class MainWindow(QMainWindow):
         
         self.btn_add = QPushButton("Ajouter")
         self.btn_add.clicked.connect(self.add_phone_row)
+        self.btn_add.setToolTip("Ajouter un nouveau téléphone à la base (Entrée aussi possible)")
         
         input_layout.addWidget(self.edt_mac, 2)
         input_layout.addWidget(self.edt_ext, 1)
@@ -512,16 +546,22 @@ class MainWindow(QMainWindow):
         # Create buttons and groups
         self.btn_remove = QPushButton("Supprimer")
         self.btn_remove.clicked.connect(self.remove_selected_rows)
+        self.btn_remove.setToolTip("Supprimer les téléphones sélectionnés de la base")
         self.btn_import_csv = QPushButton("Importer CSV")
         self.btn_import_csv.clicked.connect(self.import_csv)
+        self.btn_import_csv.setToolTip("Importer une liste de téléphones depuis un fichier CSV")
         self.btn_generate_range = QPushButton("Générer extensions (plage)")
         self.btn_generate_range.clicked.connect(self.generate_extension_range)
+        self.btn_generate_range.setToolTip("Générer automatiquement une plage d'extensions numérotées")
         self.btn_scan_network = QPushButton("Scanner réseau")
         self.btn_scan_network.clicked.connect(self.scan_network_phones)
+        self.btn_scan_network.setToolTip("Découvrir automatiquement les téléphones sur le réseau")
         self.btn_resync_phones = QPushButton("Resync sélectionnés")
         self.btn_resync_phones.clicked.connect(self.resync_selected_phones)
+        self.btn_resync_phones.setToolTip("Envoyer un signal check-sync aux téléphones sélectionnés")
         self.btn_reboot_phones = QPushButton("Reboot sélectionnés")
         self.btn_reboot_phones.clicked.connect(self.reboot_selected_phones)
+        self.btn_reboot_phones.setToolTip("Redémarrer les téléphones sélectionnés")
         self.edt_scan_subnet = QLineEdit()
         self.edt_scan_subnet.setPlaceholderText("Sous-réseau (ex: 192.168.1)")
         self.cmb_global_timezone = QComboBox()
@@ -530,6 +570,7 @@ class MainWindow(QMainWindow):
         self.cmb_global_timezone.setToolTip(TIMEZONE_TOOLTIP)
         self.btn_apply_global_timezone = QPushButton("Appliquer timezone")
         self.btn_apply_global_timezone.clicked.connect(self.apply_global_timezone)
+        self.btn_apply_global_timezone.setToolTip("Appliquer le fuseau horaire sélectionné aux téléphones")
         
         # Data Management Group
         data_group = QGroupBox("Gestion des données")
@@ -582,8 +623,10 @@ class MainWindow(QMainWindow):
         self.chk_auto_reboot.setChecked(True)
         self.btn_clear_except_db = QPushButton("Tout effacer sauf téléphones")
         self.btn_clear_except_db.clicked.connect(self.clear_except_phone_db)
+        self.btn_clear_except_db.setToolTip("Effacer l'affichage et les logs, mais conserver la base de téléphones")
         self.btn_clear_all = QPushButton("Tout effacer")
         self.btn_clear_all.clicked.connect(self.clear_everything)
+        self.btn_clear_all.setToolTip("Effacer complètement tout (téléphones, logs, affichage) - PRUDENCE")
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -898,19 +941,37 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
     def _set_scan_progress(self, value: int, text: str, active: bool = True) -> None:
-        self.scan_progress_label.setText(text)
+        # Enhanced display with time tracking
+        if active and value == 0:
+            self.scan_progress_display = ProgressDisplay(100)
+        
+        display_text = self.scan_progress_display.update(value, text)
+        full_label = f"Scan réseau: {display_text}"
+        self.scan_progress_label.setText(full_label)
         self.scan_progress.setVisible(active)
         self.scan_progress.setValue(max(0, min(100, value)))
         QApplication.processEvents()
 
     def _set_reboot_progress(self, value: int, text: str, active: bool = True) -> None:
-        self.reboot_progress_label.setText(text)
+        # Enhanced display with time tracking
+        if active and value == 0:
+            self.reboot_progress_display = ProgressDisplay(100)
+        
+        display_text = self.reboot_progress_display.update(value, text)
+        full_label = f"Reboot/Resync: {display_text}"
+        self.reboot_progress_label.setText(full_label)
         self.reboot_progress.setVisible(active)
         self.reboot_progress.setValue(max(0, min(100, value)))
         QApplication.processEvents()
 
     def _set_server_progress(self, value: int, text: str, active: bool = True) -> None:
-        self.server_progress_label.setText(text)
+        # Enhanced display with time tracking
+        if active and value == 0:
+            self.server_progress_display = ProgressDisplay(100)
+        
+        display_text = self.server_progress_display.update(value, text)
+        full_label = f"Installation serveur: {display_text}"
+        self.server_progress_label.setText(full_label)
         self.server_progress.setVisible(active)
         self.server_progress.setValue(max(0, min(100, value)))
         QApplication.processEvents()
@@ -986,14 +1047,7 @@ class MainWindow(QMainWindow):
         if ok:
             self._show_success("Serveur NTP valide")
         else:
-            answer = QMessageBox.question(
-                self,
-                "NTP non accessible",
-                "Serveur NTP non accessible.\nUtiliser le serveur TFTP comme NTP ?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            if answer == QMessageBox.StandardButton.Yes:
+            if self._show_confirm("Serveur NTP non accessible.\nUtiliser le serveur TFTP comme NTP ?", "NTP non accessible"):
                 fallback_ip = self.edt_host.text().strip()
                 if self._is_valid_ipv4(fallback_ip):
                     self.edt_ntp_ip.setText(fallback_ip)
@@ -1039,11 +1093,51 @@ class MainWindow(QMainWindow):
 
     def _show_error(self, message: str) -> None:
         self._log("ERREUR", message)
-        QMessageBox.critical(self, "Erreur", message)
+        dialog = ErrorDialog(self, "Erreur", message)
+        dialog.exec()
+
+    def _show_warning(self, message: str) -> None:
+        self._log("AVERTISSEMENT", message)
+        dialog = WarningDialog(self, "Avertissement", message)
+        dialog.exec()
 
     def _show_success(self, message: str) -> None:
         self._log("SUCCES", message)
-        QMessageBox.information(self, "Succès", message)
+        dialog = SuccessDialog(self, "Succès", message, auto_close=True)
+        dialog.exec()
+
+    def _show_info(self, message: str) -> None:
+        self._log("INFO", message)
+        dialog = InfoDialog(self, "Information", message)
+        dialog.exec()
+
+    def _show_confirm(self, message: str, title: str = "Confirmation") -> bool:
+        dialog = ConfirmDialog(self, title, message)
+        return dialog.get_result()
+
+    def _show_inline_success(self, message: str):
+        """Show inline success notification."""
+        if self.notification_manager:
+            self.notification_manager.show_success(message)
+        self._log("SUCCES", message)
+
+    def _show_inline_error(self, message: str):
+        """Show inline error notification."""
+        if self.notification_manager:
+            self.notification_manager.show_error(message)
+        self._log("ERREUR", message)
+
+    def _show_inline_warning(self, message: str):
+        """Show inline warning notification."""
+        if self.notification_manager:
+            self.notification_manager.show_warning(message)
+        self._log("AVERTISSEMENT", message)
+
+    def _show_inline_info(self, message: str):
+        """Show inline info notification."""
+        if self.notification_manager:
+            self.notification_manager.show_info(message)
+        self._log("INFO", message)
 
     def _on_mac_input_changed(self, text: str) -> None:
         formatted = format_mac_display(text)
@@ -1294,14 +1388,7 @@ class MainWindow(QMainWindow):
         self.progress.hide()
 
     def clear_everything(self) -> None:
-        answer = QMessageBox.question(
-            self,
-            "Confirmation",
-            "Voulez-vous vraiment tout effacer (téléphones + logs + écran) ?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        if not self._show_confirm("Voulez-vous vraiment tout effacer (téléphones + logs + écran) ?", "Confirmer suppression"):
             return
 
         self.tbl_phones.setRowCount(0)
@@ -1315,14 +1402,7 @@ class MainWindow(QMainWindow):
         self._show_success("Tout a été effacé avec succès.")
 
     def clear_except_phone_db(self) -> None:
-        answer = QMessageBox.question(
-            self,
-            "Confirmation",
-            "Effacer l'écran et les logs, mais conserver la base téléphones ?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        if not self._show_confirm("Effacer l'écran et les logs, mais conserver la base téléphones ?", "Confirmer suppression"):
             return
 
         self.tbl_phones.setRowCount(0)
@@ -1791,14 +1871,7 @@ class MainWindow(QMainWindow):
         ntp_ok = check_ntp_server(ntp_ip)
         self._set_ntp_status(ntp_ok)
         if not ntp_ok:
-            choice = QMessageBox.warning(
-                self,
-                "Serveur NTP invalide",
-                "Serveur NTP invalide ou inaccessible.\nContinuer / Annuler ?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
-            )
-            if choice != QMessageBox.StandardButton.Yes:
+            if not self._show_confirm("Serveur NTP invalide ou inaccessible.\nContinuer malgré tout ?", "Serveur NTP invalide"):
                 return
         try:
             self._warn_if_missing_timezone(selected_only=True)
@@ -1859,14 +1932,7 @@ class MainWindow(QMainWindow):
             if self.chk_auto_reboot.isChecked():
                 self._start_sip_notify_worker(phones, mode="check-sync")
             else:
-                answer = QMessageBox.question(
-                    self,
-                    "Reboot téléphones",
-                    "Redémarrer les téléphones maintenant ?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.Yes,
-                )
-                if answer == QMessageBox.StandardButton.Yes:
+                if self._show_confirm("Redémarrer les téléphones maintenant ?", "Reboot téléphones"):
                     self._start_sip_notify_worker(phones, mode="check-sync")
         finally:
             self._set_busy(False)
