@@ -48,6 +48,7 @@ from ssh_manager import SSHManager
 from ssh_manager import check_ntp_server
 from sip_notify import reboot_phone, resync_phone
 from xml_generator import generate_xml_files
+from theme import Theme, get_theme_manager
 
 DEFAULT_TIMEZONE = "Central Europe Standard/Daylight Time"
 SUPPORTED_TIMEZONES = [
@@ -259,6 +260,7 @@ class MainWindow(QMainWindow):
         self.reboot_worker: RebootWorker | None = None
         self.scan_thread: QThread | None = None
         self.scan_worker: NetworkScanWorker | None = None
+        self.theme_manager = get_theme_manager()
         self.setWindowTitle("Cisco IP Phone Provisioning Tool")
         self._apply_adaptive_window_size()
 
@@ -362,7 +364,19 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.progress_label, 4, 0, 1, 4)
         grid.addWidget(self.progress, 5, 0, 1, 4)
 
+        # Theme switcher
+        theme_group = QGroupBox("Apparence")
+        theme_layout = QHBoxLayout(theme_group)
+        self.btn_theme_light = QPushButton("Mode Clair")
+        self.btn_theme_light.clicked.connect(lambda: self.switch_theme(Theme.LIGHT))
+        self.btn_theme_dark = QPushButton("Mode Sombre")
+        self.btn_theme_dark.clicked.connect(lambda: self.switch_theme(Theme.DARK))
+        theme_layout.addWidget(self.btn_theme_light)
+        theme_layout.addWidget(self.btn_theme_dark)
+        theme_layout.addStretch()
+
         layout.addWidget(group)
+        layout.addWidget(theme_group)
         layout.addStretch()
         return tab
 
@@ -437,11 +451,12 @@ class MainWindow(QMainWindow):
     def _build_tab_phones(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setSpacing(12)
+        layout.setSpacing(14)
 
-        toolbar_group = QGroupBox("Actions")
-        toolbar = QHBoxLayout(toolbar_group)
-        toolbar.setSpacing(8)
+        # Input Fields Group
+        input_group = QGroupBox("Ajouter un téléphone")
+        input_layout = QHBoxLayout(input_group)
+        input_layout.setSpacing(8)
         self.edt_mac = QLineEdit()
         self.edt_mac.setPlaceholderText("MAC (scan code-barres supporté)")
         self.edt_mac.setMaxLength(17)
@@ -461,6 +476,16 @@ class MainWindow(QMainWindow):
         self.edt_mac.returnPressed.connect(self._scanner_submit_if_ready)
         self.edt_ext.returnPressed.connect(self.add_phone_row)
         self.edt_phone_pwd.returnPressed.connect(self.add_phone_row)
+        
+        self.btn_add = QPushButton("Ajouter")
+        self.btn_add.clicked.connect(self.add_phone_row)
+        
+        input_layout.addWidget(self.edt_mac, 2)
+        input_layout.addWidget(self.edt_ext, 1)
+        input_layout.addWidget(self.edt_phone_pwd, 1)
+        input_layout.addWidget(self.edt_phone_ip, 1)
+        input_layout.addWidget(self.cmb_timezone, 1)
+        input_layout.addWidget(self.btn_add)
 
         self.tbl_phones = QTableWidget(0, 6)
         self.tbl_phones.setHorizontalHeaderLabels(
@@ -484,9 +509,7 @@ class MainWindow(QMainWindow):
         self.tbl_phones.itemChanged.connect(self._on_phone_item_changed)
         self.tbl_phones.itemSelectionChanged.connect(self._on_phone_selection_changed)
 
-        btn_row = QHBoxLayout()
-        self.btn_add = QPushButton("Ajouter")
-        self.btn_add.clicked.connect(self.add_phone_row)
+        # Create buttons and groups
         self.btn_remove = QPushButton("Supprimer")
         self.btn_remove.clicked.connect(self.remove_selected_rows)
         self.btn_import_csv = QPushButton("Importer CSV")
@@ -495,9 +518,9 @@ class MainWindow(QMainWindow):
         self.btn_generate_range.clicked.connect(self.generate_extension_range)
         self.btn_scan_network = QPushButton("Scanner réseau")
         self.btn_scan_network.clicked.connect(self.scan_network_phones)
-        self.btn_resync_phones = QPushButton("Resync")
+        self.btn_resync_phones = QPushButton("Resync sélectionnés")
         self.btn_resync_phones.clicked.connect(self.resync_selected_phones)
-        self.btn_reboot_phones = QPushButton("Reboot")
+        self.btn_reboot_phones = QPushButton("Reboot sélectionnés")
         self.btn_reboot_phones.clicked.connect(self.reboot_selected_phones)
         self.edt_scan_subnet = QLineEdit()
         self.edt_scan_subnet.setPlaceholderText("Sous-réseau (ex: 192.168.1)")
@@ -505,22 +528,43 @@ class MainWindow(QMainWindow):
         self.cmb_global_timezone.addItems(SUPPORTED_TIMEZONES)
         self.cmb_global_timezone.setCurrentText(DEFAULT_TIMEZONE)
         self.cmb_global_timezone.setToolTip(TIMEZONE_TOOLTIP)
-        self.btn_apply_global_timezone = QPushButton("Appliquer aux téléphones sélectionnés")
+        self.btn_apply_global_timezone = QPushButton("Appliquer timezone")
         self.btn_apply_global_timezone.clicked.connect(self.apply_global_timezone)
-        btn_row.addWidget(self.btn_add)
-        btn_row.addWidget(self.btn_import_csv)
-        btn_row.addWidget(self.edt_scan_subnet)
-        btn_row.addWidget(self.btn_scan_network)
-        btn_row.addWidget(self.btn_generate_range)
-        btn_row.addStretch()
-        btn_row.addWidget(QLabel("Timezone global"))
-        btn_row.addWidget(self.cmb_global_timezone)
-        btn_row.addWidget(self.btn_apply_global_timezone)
-        btn_row.addWidget(self.btn_remove)
-        btn_row.addWidget(self.btn_deployer)
-        btn_row.addWidget(self.btn_resync_phones)
-        btn_row.addWidget(self.btn_reboot_phones)
-        toolbar.addLayout(btn_row)
+        
+        # Data Management Group
+        data_group = QGroupBox("Gestion des données")
+        data_layout = QHBoxLayout(data_group)
+        data_layout.setSpacing(8)
+        data_layout.addWidget(self.btn_import_csv)
+        data_layout.addWidget(self.btn_generate_range)
+        data_layout.addWidget(self.btn_remove)
+        data_layout.addStretch()
+        
+        # Network Scan Group
+        scan_group = QGroupBox("Scan réseau")
+        scan_layout = QHBoxLayout(scan_group)
+        scan_layout.setSpacing(8)
+        scan_layout.addWidget(self.edt_scan_subnet)
+        scan_layout.addWidget(self.btn_scan_network)
+        scan_layout.addStretch()
+        
+        # Settings Group
+        settings_group = QGroupBox("Paramètres globaux")
+        settings_layout = QHBoxLayout(settings_group)
+        settings_layout.setSpacing(8)
+        settings_layout.addWidget(QLabel("Timezone:"))
+        settings_layout.addWidget(self.cmb_global_timezone)
+        settings_layout.addWidget(self.btn_apply_global_timezone)
+        settings_layout.addStretch()
+        
+        # Actions Group
+        actions_group = QGroupBox("Actions téléphones")
+        actions_layout = QHBoxLayout(actions_group)
+        actions_layout.setSpacing(8)
+        actions_layout.addWidget(self.btn_deployer)
+        actions_layout.addWidget(self.btn_resync_phones)
+        actions_layout.addWidget(self.btn_reboot_phones)
+        actions_layout.addStretch()
 
         self.scan_progress_label = QLabel("Scan réseau inactif.")
         self.scan_progress = QProgressBar()
@@ -544,7 +588,8 @@ class MainWindow(QMainWindow):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addWidget(toolbar_group)
+        left_layout.setSpacing(10)
+        left_layout.addWidget(input_group)
         left_layout.addWidget(self.tbl_phones, 1)
         footer = QHBoxLayout()
         footer.addWidget(self.lbl_selected_count)
@@ -556,6 +601,13 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.scan_progress)
         left_layout.addWidget(self.reboot_progress_label)
         left_layout.addWidget(self.reboot_progress)
+        
+        # Add action groups
+        left_layout.addWidget(data_group)
+        left_layout.addWidget(scan_group)
+        left_layout.addWidget(settings_group)
+        left_layout.addWidget(actions_group)
+        
         advanced_actions = QHBoxLayout()
         advanced_actions.addStretch()
         advanced_actions.addWidget(self.btn_clear_except_db)
@@ -780,52 +832,22 @@ class MainWindow(QMainWindow):
         self._refresh_db_tab()
 
     def _apply_style(self) -> None:
-        self.setStyleSheet(
-            """
-            QWidget { background-color: #0f172a; color: #e2e8f0; font-size: 13px; font-family: "Segoe UI"; }
-            QTabWidget::pane { border: 1px solid #334155; border-radius: 10px; background: #0f172a; }
-            QTabBar::tab {
-                background: #1e293b; color: #cbd5e1; padding: 9px 16px; margin-right: 4px;
-                border-top-left-radius: 8px; border-top-right-radius: 8px;
-            }
-            QTabBar::tab:selected { background: #3b82f6; color: #ffffff; }
-            QGroupBox {
-                border: 1px solid #334155; border-radius: 10px; margin-top: 12px; padding: 10px;
-                font-weight: 600; color: #f8fafc; background: #1e293b;
-            }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
-            QLineEdit, QSpinBox, QPlainTextEdit, QTableWidget {
-                background: #0b1220; color: #f8fafc; border: 1px solid #334155; border-radius: 8px;
-                selection-background-color: #3b82f6; selection-color: #ffffff; padding: 7px;
-            }
-            QLineEdit:focus, QSpinBox:focus {
-                border: 1px solid #60a5fa; background: #111827;
-            }
-            QHeaderView::section {
-                background: #1e293b; color: #f8fafc; border: none; padding: 8px; font-weight: 600;
-            }
-            QTableWidget::item { padding: 4px; }
-            QTableWidget::item:selected { background: #2563eb; color: #ffffff; }
-            QPushButton {
-                background: #475569; color: white; border: 1px solid #475569;
-                border-radius: 8px; padding: 8px 12px; font-weight: 600;
-            }
-            QPushButton:hover { background: #64748b; }
-            QPushButton:disabled { background: #334155; border-color: #334155; color: #94a3b8; }
-            QPushButton#btn_deployer { background: #10b981; border-color: #10b981; font-size: 14px; }
-            QPushButton#btn_deployer:hover { background: #34d399; }
-            QLabel#status_dot { font-size: 22px; font-weight: 700; min-width: 20px; }
-            QProgressBar {
-                border: 1px solid #334155; border-radius: 8px; background: #0b1220; color: #e2e8f0;
-                text-align: center;
-            }
-            QProgressBar::chunk { background-color: #3b82f6; border-radius: 6px; }
-            """
-        )
+        """Apply theme stylesheet to all widgets."""
+        stylesheet = self.theme_manager.get_stylesheet()
+        # Add base font styling
+        base_style = """
+            * { font-size: 13px; font-family: "Segoe UI"; }
+        """
+        self.setStyleSheet(base_style + stylesheet)
+
+    def switch_theme(self, theme: Theme) -> None:
+        """Switch application theme and refresh UI."""
+        self.theme_manager.switch_theme(theme)
+        self._apply_style()
 
     def _set_connected_ui(self, connected: bool) -> None:
         self._connected_state = connected
-        color = "#22c55e" if connected else "#ef4444"
+        color = self.theme_manager.get_color("success") if connected else self.theme_manager.get_color("error")
         text = "Connecté" if connected else "Non connecté"
         self.lbl_status_dot.setStyleSheet(f"color: {color};")
         self.lbl_status_text.setText(text)
@@ -864,7 +886,8 @@ class MainWindow(QMainWindow):
             self.btn_reboot_phones.setEnabled(connected)
 
         if not self.ssh_available:
-            self.lbl_status_dot.setStyleSheet("color: #f59e0b;")
+            warning_color = self.theme_manager.get_color("warning")
+            self.lbl_status_dot.setStyleSheet(f"color: {warning_color};")
             self.lbl_status_text.setText("SSH client manquant (mode limité)")
 
     def _set_busy(self, busy: bool, message: str = "Action SSH en cours...") -> None:
@@ -909,10 +932,12 @@ class MainWindow(QMainWindow):
     def _set_ntp_status(self, ok: bool) -> None:
         if ok:
             self.lbl_ntp_status.setText("NTP: OK")
-            self.lbl_ntp_status.setStyleSheet("color: #22c55e; font-weight: 700;")
+            success_color = self.theme_manager.get_color("success")
+            self.lbl_ntp_status.setStyleSheet(f"color: {success_color}; font-weight: 700;")
         else:
             self.lbl_ntp_status.setText("NTP: KO")
-            self.lbl_ntp_status.setStyleSheet("color: #ef4444; font-weight: 700;")
+            error_color = self.theme_manager.get_color("error")
+            self.lbl_ntp_status.setStyleSheet(f"color: {error_color}; font-weight: 700;")
 
     def _on_sync_checkbox_toggled(self, checked: bool) -> None:
         # Si activé, NTP suit UC en permanence.
@@ -1092,9 +1117,9 @@ class MainWindow(QMainWindow):
         self.tbl_phones.setItem(row, COL_PWD, QTableWidgetItem(password))
         self.tbl_phones.setItem(row, COL_IP, QTableWidgetItem(ip.strip()))
         self.tbl_phones.setItem(row, COL_TZ, QTableWidgetItem(timezone or DEFAULT_TIMEZONE))
-        self.tbl_phones.setItem(row, COL_STATUS, QTableWidgetItem("En attente"))
         self._suspend_table_events = False
         self._apply_timezone_highlight(row)
+        self._set_phone_status(row, "En attente")
 
     def _apply_selected_edit(self) -> None:
         rows = sorted({idx.row() for idx in self.tbl_phones.selectionModel().selectedRows()})
@@ -1108,9 +1133,9 @@ class MainWindow(QMainWindow):
         self.tbl_phones.setItem(row, COL_PWD, QTableWidgetItem(self.sel_pwd.text().strip()))
         self.tbl_phones.setItem(row, COL_IP, QTableWidgetItem(self.sel_ip.text().strip()))
         self.tbl_phones.setItem(row, COL_TZ, QTableWidgetItem(self.sel_tz.currentText()))
-        self.tbl_phones.setItem(row, COL_STATUS, QTableWidgetItem("En attente"))
         self._suspend_table_events = False
         self._apply_timezone_highlight(row)
+        self._set_phone_status(row, "En attente")
         self._save_all_phones_to_db()
         self._show_success("Modifications appliquées.")
 
@@ -1154,9 +1179,7 @@ class MainWindow(QMainWindow):
             item.setText(tz)
             self._suspend_table_events = False
         if item.column() != COL_STATUS:
-            self._suspend_table_events = True
-            self.tbl_phones.setItem(item.row(), COL_STATUS, QTableWidgetItem("En attente"))
-            self._suspend_table_events = False
+            self._set_phone_status(item.row(), "En attente")
         self._apply_timezone_highlight(item.row())
         self._save_all_phones_to_db()
         self._refresh_saved_history()
@@ -1171,6 +1194,41 @@ class MainWindow(QMainWindow):
             if cell:
                 cell.setBackground(bg)
                 cell.setToolTip(TIMEZONE_TOOLTIP if is_non_default else "")
+
+    def _set_phone_status(self, row: int, status: str) -> None:
+        """Set phone status with enhanced color coding based on theme."""
+        if row < 0 or row >= self.tbl_phones.rowCount():
+            return
+        
+        self._suspend_table_events = True
+        status_item = QTableWidgetItem(status)
+        
+        # Apply theme-based colors
+        if status in ["Déployé", "OK", "Succès"]:
+            bg_color = self.theme_manager.get_color("success")
+            text_color = "#ffffff"
+            tooltip = "Téléphone configuré avec succès"
+        elif status in ["Erreur", "Échec", "KO"]:
+            bg_color = self.theme_manager.get_color("error")
+            text_color = "#ffffff"
+            tooltip = "Configuration échouée"
+        elif status in ["En cours", "Pendant", "Processing"]:
+            bg_color = self.theme_manager.get_color("warning")
+            text_color = "#000000"
+            tooltip = "Configuration en cours..."
+        else:  # "En attente"
+            bg_color = self.theme_manager.get_color("text_secondary")
+            text_color = "#ffffff"
+            tooltip = "En attente de déploiement"
+        
+        status_item.setBackground(QColor(bg_color))
+        status_item.setForeground(QColor(text_color))
+        status_item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        status_item.setToolTip(tooltip)
+        status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.tbl_phones.setItem(row, COL_STATUS, status_item)
+        self._suspend_table_events = False
 
     def _on_phone_selection_changed(self) -> None:
         rows = sorted({idx.row() for idx in self.tbl_phones.selectionModel().selectedRows()})
